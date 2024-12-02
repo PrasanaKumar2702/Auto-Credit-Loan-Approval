@@ -1,0 +1,687 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import roc_curve, roc_auc_score, classification_report, ConfusionMatrixDisplay
+from sklearn.model_selection import cross_val_score
+from scipy.stats import chi2_contingency
+
+#file paths for the uploaded datasets
+file_path_training = "C:/Users/sdevi/OneDrive - The University of Texas at Dallas/TrainingData_A_R-392854_Candidate Attach #1_PresSE_SRF #1139.csv"
+file_path_evaluation = "C:/Users/sdevi/OneDrive - The University of Texas at Dallas/EvaluationData_B_R-392854_Candidate Attach #2_PresSE_SRF #1139.csv"
+
+# Loading datasets
+training_data = pd.read_csv(file_path_training)
+evaluation_data = pd.read_csv(file_path_evaluation)
+
+# Overview of both datasets (basic info and first few rows)
+training_info = training_data.info()
+training_head = training_data.head()
+evaluation_info = evaluation_data.info()
+evaluation_head = evaluation_data.head()
+
+training_summary = {
+    "training_info": training_info,
+    "training_head": training_head,
+    "evaluation_info": evaluation_info,
+    "evaluation_head": evaluation_head,
+}
+
+training_summary
+
+
+# In[2]:
+
+
+# Calculating the percentage of missing values
+missing_values_training = training_data.isnull().mean() * 100
+missing_values_evaluation = evaluation_data.isnull().mean() * 100
+
+# Creating a summary DataFrame of missing values
+missing_summary = pd.DataFrame({
+    'Training Dataset (%)': missing_values_training,
+    'Evaluation Dataset (%)': missing_values_evaluation
+}).round(2)
+
+# Filtering to show only columns with missing values
+missing_summary = missing_summary[(missing_summary['Training Dataset (%)'] > 0) | (missing_summary['Evaluation Dataset (%)'] > 0)]
+
+# Recreating the plot for missing values visualization
+plt.figure(figsize=(14, 7))
+
+# Plot for Training Dataset
+plt.barh(missing_summary.index, missing_summary['Training Dataset (%)'], color='skyblue', label='Training Dataset')
+
+# Plot for Evaluation Dataset
+plt.barh(missing_summary.index, missing_summary['Evaluation Dataset (%)'], color='lightcoral', alpha=0.7, label='Evaluation Dataset')
+
+# Labels and title for the plot
+plt.xlabel('Percentage of Missing Values')
+plt.title('Missing Values in Training and Evaluation Datasets')
+plt.legend()
+plt.grid(axis='x', linestyle='--', alpha=0.7)
+
+# Display the plot
+plt.tight_layout()
+plt.show()
+
+
+
+# In[3]:
+
+
+# Droping coloumns where the missing value percentage is greater than 20%
+# Filter the missing summary for columns with more than 20% missing values
+high_missing_summary = missing_summary[
+    (missing_summary['Training Dataset (%)'] > 20) | (missing_summary['Evaluation Dataset (%)'] > 20)
+]
+
+# Plot the high missing values visualization
+plt.figure(figsize=(12, 6))
+
+# Plot for Training Dataset
+plt.barh(high_missing_summary.index, high_missing_summary['Training Dataset (%)'], color='steelblue', label='Training Dataset')
+
+# Plot for Evaluation Dataset
+plt.barh(high_missing_summary.index, high_missing_summary['Evaluation Dataset (%)'], color='indianred', alpha=0.7, label='Evaluation Dataset')
+
+# Labels and title
+plt.xlabel('Percentage of Missing Values')
+plt.title('Columns with More Than 20% Missing Values in Training and Evaluation Datasets')
+plt.legend()
+plt.grid(axis='x', linestyle='--', alpha=0.7)
+
+# Display the plot
+plt.tight_layout()
+plt.show()
+
+# Calculating the number of columns before dropping
+initial_feature_count = len(training_data.columns)
+
+# Counting the number of columns with more than 20% missing values
+columns_to_drop = high_missing_summary.index
+num_columns_to_drop = len(columns_to_drop)
+
+# Calculating the number of remaining features after dropping
+remaining_feature_count = initial_feature_count - num_columns_to_drop
+
+# Step to determine if there are enough features left
+enough_features = remaining_feature_count > (initial_feature_count * 0.5)  # Assuming 50% of initial features is a threshold
+
+(initial_feature_count, num_columns_to_drop, remaining_feature_count, enough_features)
+
+
+# In[4]:
+
+
+# Droping columns with more than 20% missing values from both datasets
+training_data_cleaned = training_data.drop(columns=columns_to_drop)
+evaluation_data_cleaned = evaluation_data.drop(columns=columns_to_drop)
+
+# Step to check the shape of the cleaned datasets
+cleaned_training_shape = training_data_cleaned.shape
+cleaned_evaluation_shape = evaluation_data_cleaned.shape
+
+(cleaned_training_shape, cleaned_evaluation_shape)
+
+
+# In[5]:
+
+
+training_data_final = training_data_cleaned[
+    (training_data_cleaned['Gender'] != 'Undefined') & training_data_cleaned['bad_flag'].notna()
+]
+
+# Displaying the new shape of the training dataset after dropping rows
+training_data_final_shape = training_data_final.shape
+training_data_final_shape
+
+
+# In[6]:
+
+
+# Droping rows where 'Gender' is 'Undefined' and 'bad_flag' is NaN or blank from the test dataset
+evaluation_data_final = evaluation_data_cleaned[
+    (evaluation_data_cleaned['Gender'] != 'Undefined') & evaluation_data_cleaned['bad_flag'].notna()
+]
+
+# Display the new shape of the test dataset after dropping rows
+evaluation_data_final_shape = evaluation_data_final.shape
+evaluation_data_final_shape
+
+
+# In[7]:
+
+
+# Identifying and encode the categorical columns
+categorical_columns = ['collateral_dlrinput_newused_1req', 'Gender', 'Race']
+
+# Using one-hot encoding for the categorical features
+training_data_encoded = pd.get_dummies(training_data_cleaned, columns=categorical_columns, drop_first=False)
+evaluation_data_encoded = pd.get_dummies(evaluation_data_cleaned, columns=categorical_columns, drop_first=False)
+
+
+# In[8]:
+
+
+training_data_encoded
+
+
+# In[9]:
+
+
+evaluation_data_encoded
+
+
+# In[10]:
+
+
+# Re-align columns in case there are any mismatches between training and evaluation datasets
+training_data_encoded, evaluation_data_encoded = training_data_encoded.align(evaluation_data_encoded, join='inner', axis=1)
+
+
+# In[11]:
+
+
+training_data_encoded, evaluation_data_encoded
+
+
+# In[12]:
+
+
+# Recalculating the correlation matrix for the encoded training dataset
+correlation_matrix_encoded = training_data_encoded.corr()
+
+# Ploting the updated correlation heatmap
+plt.figure(figsize=(15, 10))
+sns.heatmap(correlation_matrix_encoded, annot=False, cmap='coolwarm', linewidths=0.5)
+plt.title('Correlation Heatmap of Encoded Features in Training Dataset')
+plt.show()
+
+
+# In[13]:
+
+
+# Identifying highly correlated features (absolute correlation > 0.85)
+correlation_threshold = 0.85
+upper_triangle = correlation_matrix_encoded.where(np.triu(np.ones(correlation_matrix_encoded.shape), k=1).astype(bool))
+high_correlation_features = [column for column in upper_triangle.columns if any(abs(upper_triangle[column]) > correlation_threshold)]
+
+# Drop the highly correlated features from the training and evaluation datasets
+training_data_final = training_data_encoded.drop(columns=high_correlation_features)
+evaluation_data_final = evaluation_data_encoded.drop(columns=high_correlation_features)
+
+# Check the shape of the final datasets after removing highly correlated features
+final_training_shape = training_data_final.shape
+final_evaluation_shape = evaluation_data_final.shape
+
+(final_training_shape, final_evaluation_shape, high_correlation_features)
+
+
+# In[14]:
+
+
+# Imputing only the numerical features since all categorical features have been encoded through one-hot
+numerical_imputer = SimpleImputer(strategy='mean')
+
+# Applying imputation on numerical features
+training_data_final = pd.DataFrame(numerical_imputer.fit_transform(training_data_final), columns=training_data_final.columns)
+evaluation_data_final = pd.DataFrame(numerical_imputer.transform(evaluation_data_final), columns=evaluation_data_final.columns)
+
+# Verifying if there are any remaining missing values
+remaining_missing_training = training_data_final.isnull().sum().sum()
+remaining_missing_evaluation = evaluation_data_final.isnull().sum().sum()
+
+(remaining_missing_training, remaining_missing_evaluation)
+
+
+# In[15]:
+
+
+# Now running Logistic Regression with cleaned data
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, roc_auc_score
+
+# Defining features (X) and target (y) for training and evaluation datasets
+X_train = training_data_final.drop(columns=['aprv_flag'])
+y_train = training_data_final['aprv_flag']
+X_test = evaluation_data_final.drop(columns=['aprv_flag'])
+y_test = evaluation_data_final['aprv_flag']
+
+# Initialize and fit the Logistic Regression model
+logistic_model = LogisticRegression(max_iter=1000, random_state=42)
+logistic_model.fit(X_train, y_train)
+
+# Make predictions on the evaluation dataset
+y_pred = logistic_model.predict(X_test)
+y_prob = logistic_model.predict_proba(X_test)[:, 1]
+
+# Evaluating the model performance
+classification_report_logistic = classification_report(y_test, y_pred)
+roc_auc = roc_auc_score(y_test, y_prob)
+
+print(classification_report_logistic, roc_auc)
+
+
+# In[16]:
+
+
+# Extracting feature importance using the coefficients of the Logistic Regression model
+feature_importance = np.abs(logistic_model.coef_[0])
+feature_names = X_train.columns
+
+# Creating a DataFrame to sort and display the feature importance
+importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': feature_importance})
+importance_df = importance_df.sort_values(by='Importance', ascending=False).head(15)
+
+# Plot the top 15 important features
+plt.figure(figsize=(12, 8))
+plt.barh(importance_df['Feature'], importance_df['Importance'], color='teal')
+plt.xlabel('Importance')
+plt.title('Top 15 Most Important Features from Logistic Regression')
+plt.gca().invert_yaxis()
+plt.show()
+
+
+# In[17]:
+
+
+# Initializing and fit the Gradient Boosting model
+gb_model = GradientBoostingClassifier(random_state=42)
+gb_model.fit(X_train, y_train)
+
+# Making predictions on the evaluation dataset
+y_pred_gb = gb_model.predict(X_test)
+y_prob_gb = gb_model.predict_proba(X_test)[:, 1]
+
+# Evaluating the Gradient Boosting model performance
+classification_report_gb = classification_report(y_test, y_pred_gb)
+roc_auc_gb = roc_auc_score(y_test, y_prob_gb)
+
+print(classification_report_gb, roc_auc_gb)
+
+# Extracting feature importances
+importances = gb_model.feature_importances_
+
+# Createing a DataFrame for feature names and importance scores
+feature_df = pd.DataFrame({
+    'Feature': feature_names,
+    'Importance': importances
+})
+
+# Sorting the DataFrame by importance in descending order and select top 15 features
+top_features = feature_df.sort_values(by='Importance', ascending=False).head(15)
+
+# Plot the top 15 features
+plt.figure(figsize=(10, 6))
+plt.barh(top_features['Feature'], top_features['Importance'], color='skyblue')
+plt.xlabel('Importance Score')
+plt.title('Top 15 Important Features - Gradient Boosting Classifier')
+plt.gca().invert_yaxis()  # To have the most important feature at the top
+plt.show()
+
+
+# In[18]:
+
+
+# Defining the cross-validation function
+def cross_validate_model(model, X, y, scoring_metric='roc_auc', cv=5):
+    scores = cross_val_score(model, X, y, scoring=scoring_metric, cv=cv, n_jobs=-1)
+    return scores.mean(), scores.std()
+
+# Performing cross-validation for both models
+log_cv_mean, log_cv_std = cross_validate_model(logistic_model, X_train, y_train)
+gb_cv_mean, gb_cv_std = cross_validate_model(gb_model, X_train, y_train)
+
+# Summary of cross-validation results
+cv_results = pd.DataFrame({
+    'Model': ['Logistic Regression', 'Gradient Boosting'],
+    'CV Mean AUC': [log_cv_mean, gb_cv_mean],
+    'CV Std AUC': [log_cv_std, gb_cv_std]
+})
+
+print (cv_results)
+
+
+# In[19]:
+
+
+# Data for visualization
+models = ['Logistic Regression', 'Gradient Boosting']
+mean_auc = [log_cv_mean, gb_cv_mean]
+std_auc = [log_cv_std, gb_cv_std]
+
+# Plot the cross-validation results
+plt.figure(figsize=(10, 6))
+plt.bar(models, mean_auc, yerr=std_auc, color=['skyblue', 'lightcoral'], capsize=5)
+plt.xlabel('Model')
+plt.ylabel('Mean AUC Score')
+plt.title('Cross-Validation Mean AUC Scores with Standard Deviation')
+plt.ylim(0.7, 1.0)
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+# Display the plot
+plt.show()
+
+
+# In[20]:
+
+
+# Performinging gender bias analysis using the fitted model for business objectives
+evaluation_data_with_gender = evaluation_data_encoded.copy()
+evaluation_data_with_gender['Predicted Approval'] = gb_model.predict(X_test)
+
+if 'Gender_Male' in evaluation_data_with_gender.columns:
+    # Recover gender information based on the 'Gender_Male' one-hot encoded column
+    evaluation_data_with_gender['Gender'] = np.where(evaluation_data_with_gender['Gender_Male'] == 1, 'Male', 'Female')
+else:
+    raise KeyError("The column 'Gender_Male' is not found. Verify the one-hot encoding step.")
+
+
+# Calculating approval rates for each gender group
+approval_rates = evaluation_data_with_gender.groupby('Gender')['Predicted Approval'].mean()
+
+# Creating a DataFrame for the approval rates
+approval_rates_df = pd.DataFrame(approval_rates).reset_index()
+approval_rates_df.columns = ['Gender', 'Approval Rate']
+
+print (approval_rates_df)
+
+# Visualizing the approval rates by gender
+plt.figure(figsize=(8, 5))
+plt.bar(approval_rates_df['Gender'], approval_rates_df['Approval Rate'] * 100, color=['skyblue', 'lightgreen'])
+plt.title("Predicted Approval Rates by Gender")
+plt.xlabel("Gender")
+plt.ylabel("Approval Rate (%)")
+plt.ylim(0, 100)
+for index, value in enumerate(approval_rates_df['Approval Rate']):
+    plt.text(index, value * 100 + 1, f"{value * 100:.2f}%", ha='center')
+plt.grid(axis='y')
+plt.show()
+
+
+# In[21]:
+
+
+#RACE ANALYSIS 
+# Manually adding back the race columns if they are missing
+race_columns_needed = ['Race_Asian', 'Race_Black', 'Race_Hispanic', 'Race_White', 'Race_Other']
+for col in race_columns_needed:
+    if col not in evaluation_data_encoded:
+        evaluation_data[col] = 0  # Assign 0 if the column is missing
+
+# Identifying the race columns again
+race_columns_present = [col for col in race_columns_needed if col in evaluation_data_encoded]
+print("Race columns found:", race_columns_present)
+
+# Defining the race mapping
+race_mapping = {
+    'Race_Asian': 'Asian',
+    'Race_Black': 'Black',
+    'Race_Hispanic': 'Hispanic',
+    'Race_White': 'White',
+    'Race_Other': 'Other'
+}
+# Creating a copy of the evaluation data and add predictions
+evaluation_data_with_race = evaluation_data_encoded.copy()
+evaluation_data_with_race['Predicted Approval'] = gb_model.predict(X_test)
+# Determining the race of each applicant based on one-hot encoded columns
+evaluation_data_with_race['Race'] = (
+    evaluation_data_with_race[race_columns_present]
+    .apply(lambda row: row.idxmax() if row.sum() > 0 else np.nan, axis=1)
+    .map(race_mapping)
+)
+
+# Droping rows where race couldn't be determined (if all zeros)
+evaluation_data_with_race = evaluation_data_with_race.dropna(subset=['Race'])
+
+# Calculating approval rates for each racial group
+approval_rates_race = evaluation_data_with_race.groupby('Race')['Predicted Approval'].mean()
+approval_rates_race_df = pd.DataFrame(approval_rates_race).reset_index()
+approval_rates_race_df.columns = ['Race', 'Approval Rate']
+
+# Printing the approval rates by race
+print(approval_rates_race_df)
+
+
+# Visualizing the approval rates by gender
+plt.figure(figsize=(10, 6))
+plt.bar(approval_rates_race_df['Race'], approval_rates_race_df['Approval Rate'] * 100, color=['skyblue', 'lightgreen'])
+plt.title("Predicted Approval Rates by Race")
+plt.xlabel("Race")
+plt.ylabel("Approval Rate (%)")
+plt.ylim(0, 100)
+for index, value in enumerate(approval_rates_race_df['Approval Rate']):
+    plt.text(index, value * 100 + 1, f"{value * 100:.2f}%", ha='center')
+plt.grid(axis='y')
+plt.show()
+
+
+# In[22]:
+
+
+#FICO approval analysis
+# Creating a 25-point bin for FICO scores
+bins = np.arange(450, 900, 25)
+training_data['fico_bin'] = pd.cut(training_data['fico'], bins=bins)
+
+# Calculating the approval rates for each bin
+approval_counts = training_data.groupby(['fico_bin', 'aprv_flag']).size().unstack()
+approval_counts.fillna(0, inplace=True)
+
+# Normalizing the counts to show the proportion of approvals and rejections
+approval_proportions = approval_counts.div(approval_counts.sum(axis=1), axis=0)
+
+# Ploting the stacked histogram
+plt.figure(figsize=(12, 6))
+approval_proportions.plot(kind='bar', stacked=True, color=['salmon', 'skyblue'], edgecolor='black', width=0.8)
+
+# Adding annotations for key score ranges
+plt.text(3, 0.7, 'Below 600: Low approval rates', fontsize=12, color='red', fontweight='bold')
+plt.text(7, 0.5, '650-700: Transition zone', fontsize=12, color='orange', fontweight='bold')
+plt.text(10, 0.8, 'Above 750: High approval rates', fontsize=12, color='green', fontweight='bold')
+
+# Customizing the plot
+plt.title('Proportional Approval and Rejection Rates by FICO Score Range')
+plt.xlabel('FICO Score Range (25-point bins)')
+plt.ylabel('Proportion of Approvals and Rejections')
+plt.xticks(rotation=45, ha='right')
+plt.legend(['Rejected', 'Approved'], title='Loan Decision')
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.show()
+
+
+# In[23]:
+
+
+#Additional FICO analysis by visualizing Approval Rate VS FICO category
+# Create a copy of the test data and add the predicted approval results
+evaluation_data_with_fico = evaluation_data.copy()  # Assuming evaluation_data is your test dataset
+evaluation_data_with_fico['Predicted Approval'] = gb_model.predict(X_test)
+
+# Defining FICO score bins (for example: poor, fair, good, very good, excellent)
+fico_bins = [300, 579, 669, 739, 799, 850]
+fico_labels = ['Poor', 'Fair', 'Good', 'Very Good', 'Excellent']
+
+# Creating a FICO score category for each applicant
+evaluation_data_with_fico['FICO Category'] = pd.cut(evaluation_data_with_fico['fico'], bins=fico_bins, labels=fico_labels)
+
+# Calculating approval rates for each FICO score category
+approval_rates_fico = evaluation_data_with_fico.groupby('FICO Category')['Predicted Approval'].mean()
+
+# Creating a DataFrame for the approval rates
+approval_rates_fico_df = pd.DataFrame(approval_rates_fico).reset_index()
+approval_rates_fico_df.columns = ['FICO Category', 'Approval Rate']
+
+# Printing the approval rates by FICO category
+print(approval_rates_fico_df)
+
+plt.figure(figsize=(10, 6))
+plt.bar(approval_rates_fico_df['FICO Category'], approval_rates_fico_df['Approval Rate'], color='skyblue')
+plt.xlabel('FICO Category')
+plt.ylabel('Approval Rate')
+plt.title('Approval Rates by FICO Score Category')
+plt.ylim(0, 1)  # Approval rate between 0 and 1
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.show()
+
+
+# In[24]:
+
+
+#Loan-To-Value Ratio analysis
+# Apply log transformation to the LTV ratio
+training_data['log_ltv'] = np.log1p(training_data['ltv_1req'])
+
+# Filter data for outlier analysis (LTV ratio > 150%)
+outliers = training_data[training_data['ltv_1req'] > 1.5]
+
+# Plot histogram and KDE plot for the original LTV ratio
+plt.figure(figsize=(14, 6))
+plt.subplot(1, 2, 1)
+sns.histplot(training_data['ltv_1req'], kde=True, color='skyblue', bins=30)
+plt.title('Histogram and KDE Plot of LTV Ratio')
+plt.xlabel('LTV Ratio')
+plt.ylabel('Frequency')
+
+# Plot the box plot for the log-transformed LTV ratio
+plt.subplot(1, 2, 2)
+sns.boxplot(data=training_data, y='log_ltv', color='lightgreen')
+plt.title('Box Plot of Log-Transformed LTV Ratio')
+plt.ylabel('Log-Transformed LTV Ratio')
+
+plt.tight_layout()
+plt.show()
+
+# Separate analysis for LTV ratio outliers
+plt.figure(figsize=(10, 6))
+sns.histplot(outliers['ltv_1req'], kde=True, color='salmon', bins=15)
+plt.title('Distribution of High LTV Ratio Loans (LTV > 150%)')
+plt.xlabel('LTV Ratio')
+plt.ylabel('Frequency')
+plt.grid()
+plt.show()
+
+# Summary of outlier characteristics
+outlier_summary = outliers.describe()
+
+print("Summary of Loans with High LTV Ratios (LTV > 150%):")
+print(outlier_summary)
+
+
+# In[25]:
+
+
+#ROC-AUC AND Confusion Matrix
+# Train Logistic Regression model
+logistic_model = LogisticRegression(max_iter=1000, random_state=42)
+logistic_model.fit(X_train, y_train)
+y_prob_log = logistic_model.predict_proba(X_test)[:, 1]
+
+# Train Gradient Boosting model
+gb_model = GradientBoostingClassifier(random_state=42)
+gb_model.fit(X_train, y_train)
+y_prob_gb = gb_model.predict_proba(X_test)[:, 1]
+
+# Calculate ROC curves
+fpr_log, tpr_log, _ = roc_curve(y_test, y_prob_log)
+fpr_gb, tpr_gb, _ = roc_curve(y_test, y_prob_gb)
+
+# Calculate AUC scores
+roc_auc_log = roc_auc_score(y_test, y_prob_log)
+roc_auc_gb = roc_auc_score(y_test, y_prob_gb)
+
+# Plot ROC Curves
+plt.figure(figsize=(10, 6))
+plt.plot(fpr_log, tpr_log, label='Logistic Regression (AUC = {:.2f})'.format(roc_auc_log))
+plt.plot(fpr_gb, tpr_gb, label='Gradient Boosting (AUC = {:.2f})'.format(roc_auc_gb))
+plt.plot([0, 1], [0, 1], 'k--', label='Random Classifier')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curves for Logistic Regression and Gradient Boosting Models')
+plt.legend()
+plt.grid()
+plt.show()
+
+# Display confusion matrices
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+ConfusionMatrixDisplay.from_estimator(logistic_model, X_test, y_test, ax=axes[0], cmap='Blues', values_format='d')
+axes[0].set_title('Confusion Matrix: Logistic Regression')
+ConfusionMatrixDisplay.from_estimator(gb_model, X_test, y_test, ax=axes[1], cmap='Blues', values_format='d')
+axes[1].set_title('Confusion Matrix: Gradient Boosting')
+plt.tight_layout()
+plt.show()
+
+
+# In[26]:
+
+
+#Gender-Bias Analysis
+# Copy the evaluation data and get predictions
+evaluation_data_with_gender = evaluation_data_encoded.copy()
+evaluation_data_with_gender['Predicted Approval'] = gb_model.predict(X_test)
+
+# Recover gender information based on the 'Gender_Male' one-hot encoded column
+if 'Gender_Male' in evaluation_data_with_gender.columns:
+    evaluation_data_with_gender['Gender'] = np.where(evaluation_data_with_gender['Gender_Male'] == 1, 'Male', 'Female')
+else:
+    raise KeyError("The column 'Gender_Male' is not found. Verify the one-hot encoding step.")
+
+# Calculate approval rates for each gender group
+approval_rates = evaluation_data_with_gender.groupby('Gender')['Predicted Approval'].mean()
+
+# Create a DataFrame for the approval rates
+approval_rates_df = pd.DataFrame(approval_rates).reset_index()
+approval_rates_df.columns = ['Gender', 'Approval Rate']
+
+# Visualize the approval rates by gender
+plt.figure(figsize=(8, 5))
+plt.bar(approval_rates_df['Gender'], approval_rates_df['Approval Rate'] * 100, color=['skyblue', 'lightgreen'])
+plt.title("Predicted Approval Rates by Gender")
+plt.xlabel("Gender")
+plt.ylabel("Approval Rate (%)")
+plt.ylim(0, 100)
+for index, value in enumerate(approval_rates_df['Approval Rate']):
+    plt.text(index, value * 100 + 1, f"{value * 100:.2f}%", ha='center')
+plt.grid(axis='y')
+plt.show()
+
+# Perform chi-square test for gender bias analysis
+# Create a contingency table for observed approval counts
+contingency_table = pd.crosstab(evaluation_data_with_gender['Gender'], evaluation_data_with_gender['Predicted Approval'])
+
+# Perform chi-square test
+chi2_stat, p_value, dof, expected = chi2_contingency(contingency_table)
+
+# Output the chi-square test results
+chi2_results = {
+    "Chi-Square Statistic": chi2_stat,
+    "p-value": p_value,
+    "Degrees of Freedom": dof,
+    "Expected Frequencies": expected
+}
+
+print(chi2_results)
+
+
+# In[ ]:
+
+
+
+
+
+# In[ ]:
+
+
+
+
